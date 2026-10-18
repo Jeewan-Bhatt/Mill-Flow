@@ -1,6 +1,7 @@
 import express from "express";
 import Mill from "../models/Mill.js";
 import mongoose from "mongoose";
+import { protect } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -10,7 +11,7 @@ const allowedServices = [
     "other_grains"
 ];
 
-router.post("/", async (req, res) => {
+router.post("/", protect, async (req, res) => {
     try {
         const { millName, ownerId, location, contactNo, services } = req.body;
 
@@ -84,7 +85,7 @@ router.post("/", async (req, res) => {
 });
 
 
-router.get("/", async (req, res) => {
+router.get("/", protect, async (req, res) => {
     try {
         //finding mills that are active at the moment
         const mills = await Mill.find({ isActive: true });
@@ -105,7 +106,7 @@ router.get("/", async (req, res) => {
 });
 
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", protect, async (req, res) => {
     try {
         const { id } = req.params;
         if (!mongoose.isValidObjectId(id)) {
@@ -141,7 +142,7 @@ router.get("/:id", async (req, res) => {
 });
 
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", protect, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -289,7 +290,7 @@ router.put("/:id", async (req, res) => {
 });
 
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", protect, async (req, res) => {
     try {
         const { id } = req.params;
 
