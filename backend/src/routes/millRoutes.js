@@ -2,6 +2,7 @@ import express from "express";
 import Mill from "../models/Mill.js";
 import mongoose from "mongoose";
 import { protect } from "../middleware/authMiddleware.js";
+import { requiredRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
@@ -11,9 +12,9 @@ const allowedServices = [
     "other_grains"
 ];
 
-router.post("/", protect, async (req, res) => {
+router.post("/", protect, requiredRole("owner"), async (req, res) => {
     try {
-        const { millName, ownerId, location, contactNo, services } = req.body;
+        const { millName, location, contactNo, services } = req.body;
 
         //validating the services
         const invalidServices = services.filter(service => !allowedServices.includes(service));
@@ -29,7 +30,6 @@ router.post("/", protect, async (req, res) => {
         //check required fields
         if (
             !millName?.trim() ||
-            !ownerId ||
             !location?.trim() ||
             !contactNo?.trim() ||
             !Array.isArray(services) ||
@@ -42,13 +42,14 @@ router.post("/", protect, async (req, res) => {
         }
 
         //check ownerId format
-        if (!mongoose.isValidObjectId(ownerId)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid ownerId format."
-            });
-        }
+        // if (!mongoose.isValidObjectId(ownerId)) {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: "Invalid ownerId format."
+        //     });
+        // }
 
+        const ownerId = req.user.id;
         //create document using only allowed fields
         const mill = new Mill({
             millName: millName.trim(),
@@ -84,11 +85,13 @@ router.post("/", protect, async (req, res) => {
     }
 });
 
-
-router.get("/", protect, async (req, res) => {
+router.get("/", protect, requiredRole("owner"), async (req, res) => {
     try {
         //finding mills that are active at the moment
-        const mills = await Mill.find({ isActive: true });
+        const mills = await Mill.find({
+            isActive: true,
+            ownerId: req.user.id    //find mills associated with the same owner
+        });
 
         return res.status(200).json({
             success: true,
@@ -105,8 +108,7 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
-
-router.get("/:id", protect, async (req, res) => {
+router.get("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
         if (!mongoose.isValidObjectId(id)) {
@@ -119,7 +121,8 @@ router.get("/:id", protect, async (req, res) => {
         //find a mill if the mill with given id is active at the moment
         const mill = await Mill.findOne({
             _id: id,
-            isActive: true
+            isActive: true,
+            ownerId: req.user.id
         });
 
         if (!mill) {
@@ -141,8 +144,7 @@ router.get("/:id", protect, async (req, res) => {
     }
 });
 
-
-router.put("/:id", protect, async (req, res) => {
+router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -253,9 +255,15 @@ router.put("/:id", protect, async (req, res) => {
 
         //updating mill with given id
         const mill = await Mill.findByIdAndUpdate(
-            id,
+            {
+                _id: id,
+                ownerId: req.user.id,
+            },
             updates,
-            { new: true, runValidators: true }
+            {
+                new: true,
+                runValidators: true
+            }
         );
 
         if (!mill) {
@@ -289,8 +297,7 @@ router.put("/:id", protect, async (req, res) => {
     }
 });
 
-
-router.delete("/:id", protect, async (req, res) => {
+router.delete("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -304,7 +311,10 @@ router.delete("/:id", protect, async (req, res) => {
 
         //updating mill isActive
         const mill = await Mill.findByIdAndUpdate(
-            id,
+            {
+                _id: id,
+                ownerId: req.user.id
+            },
             { isActive: false },
             { new: true, runValidators: true }
         );
