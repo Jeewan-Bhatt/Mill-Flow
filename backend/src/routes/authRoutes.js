@@ -4,6 +4,9 @@ import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import User from "../models/user.js";
 
+import mongoose from "mongoose";
+import Mill from "../models/Mill.js";
+
 dotenv.config();
 
 const router = express.Router();
@@ -161,6 +164,141 @@ router.post("/login", async(req,res)=>{
             success: false,
             message: "Internal server error."
         });
+    }
+});
+
+router.post("/register-owner", async (req, res) => {
+    let session;
+
+    try {
+        const { owner, mill } = req.body ?? {};
+
+        // Validate owner details
+        if (
+            !owner ||
+            typeof owner.name !== "string" ||
+            typeof owner.email !== "string" ||
+            typeof owner.password !== "string" ||
+            !owner.name.trim() ||
+            !owner.email.trim() ||
+            owner.password.length < 8
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Provide a valid owner name, email, and password of at least 8 characters.",
+            });
+        }
+
+        const email = owner.email.trim().toLowerCase();
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a valid email address.",
+            });
+        }
+
+        // Validate first mill details
+        const allowedServices = [
+            "paddy_processing",
+            "wheat_grinding",
+            "other_grains",
+        ];
+
+        if (
+            !mill ||
+            typeof mill.millName !== "string" ||
+            !mill.millName.trim() ||
+            typeof mill.location !== "string" ||
+            !mill.location.trim() ||
+            typeof mill.contactNo !== "string" ||
+            !/^[0-9+\-\s()]{7,20}$/.test(mill.contactNo.trim()) ||
+            !Array.isArray(mill.services) ||
+            mill.services.length === 0 ||
+            !mill.services.every(
+                (service) => allowedServices.includes(service)
+            )
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Provide valid details for the first mill and its services.",
+            });
+        }
+
+        // Check whether the email is already registered
+        const existingUser = await User.findOne({ email });
+
+        if (existingUser) {
+            return res.status(409).json({
+                success: false,
+                message: "An account with this email already exists.",
+            });
+        }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(owner.password, 12);
+
+        // Create owner and mill in one database transaction
+        session = await mongoose.startSession();
+
+        let createdOwner;
+        let createdMill;
+
+        await session.withTransaction(async () => {
+            createdOwner = new User({
+                name: owner.name.trim(),
+                email,
+                password: hashedPassword,
+                role: "owner",
+            });
+
+            await createdOwner.save({ session });
+
+            createdMill = new Mill({
+                millName: mill.millName.trim(),
+                ownerId: createdOwner._id,
+                location: mill.location.trim(),
+                contactNo: mill.contactNo.trim(),
+                services: [...new Set(mill.services)],
+            });
+
+            await createdMill.save({ session });
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Owner account and first mill registered successfully.",
+            owner: {
+                id: createdOwner._id,
+                name: createdOwner.name,
+                email: createdOwner.email,
+                role: createdOwner.role,
+            },
+            mill: {
+                id: createdMill._id,
+                millName: createdMill.millName,
+                location: createdMill.location,
+                services: createdMill.services,
+            },
+        });
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: "An account with this email already exists.",
+            });
+        }
+
+        console.error("Owner registration error:", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "Could not register the owner and mill.",
+        });
+    } finally {
+        if (session) {
+            await session.endSession();
+        }
     }
 });
 
