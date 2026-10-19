@@ -7,6 +7,7 @@ import { requiredRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
+//request for the membership in any mill as a staff
 router.post("/request", protect, requiredRole("staff"), async (req, res) => {
     try {
         const { millId } = req.body;
@@ -101,5 +102,183 @@ router.post("/request", protect, requiredRole("staff"), async (req, res) => {
         });
     }
 });
+
+//get all the pending membership requests
+router.get("/pending", protect, requiredRole("owner"), async (req, res) => {
+    try {
+        const { millId } = req.query;
+
+        //millId validation
+        if (!mongoose.isValidObjectId(millId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a valid mill ID.",
+            });
+        }
+
+        // Confirm this mill belongs to the logged-in owner
+        const mill = await Mill.findOne({
+            _id: millId,
+            ownerId: req.user.id,
+            isActive: true,
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or you do not own this mill.",
+            });
+        }
+
+        // Fetch pending requests for this mill only
+        const requests = await MillMembership.find({
+            millId: mill._id,
+            status: "pending",
+        })
+            .populate("userId", "name email")
+            .sort({ requestedAt: 1 });
+
+        return res.status(200).json({
+            success: true,
+            count: requests.length,
+            requests,
+        });
+    } catch (error) {
+        console.error("Fetch pending requests error:", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "Could not fetch membership requests.",
+        });
+    }
+}
+);
+
+//approve the pending membership request of staff for the mill
+router.patch("/:id/approve", protect, requiredRole("owner"), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // check if Id is valid
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid membership ID.",
+            });
+        }
+
+        //find the membership request for the given id
+        const membership = await MillMembership.findOne({
+            _id: id,
+            status: "pending",
+        });
+
+        if (!membership) {
+            return res.status(404).json({
+                success: false,
+                message: "Pending membership request not found.",
+            });
+        }
+
+        //find mill for the given membership request
+        const mill = await Mill.findOne({
+            _id: membership.millId,
+            ownerId: req.user.id,
+            isActive: true,
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or you do not own this mill.",
+            });
+        }
+
+        membership.status = "active";
+        membership.approvedAt = new Date();
+        membership.removedAt = null;
+
+        await membership.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Staff membership approved successfully.",
+            membership,
+        });
+    } catch (error) {
+        console.error("Approve membership error:", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "Could not approve membership request.",
+        });
+    }
+}
+);
+
+router.patch("/:id/reject", protect, requiredRole("owner"), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        //check for valid id
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid membership ID.",
+            });
+        }
+
+        //find a pending membership
+        const membership = await MillMembership.findOne({
+            _id: id,
+            status: "pending",
+        });
+
+        //if pending membership not found
+        if (!membership) {
+            return res.status(404).json({
+                success: false,
+                message: "Pending membership request not found.",
+            });
+        }
+
+        //find mill with the pending membership request
+        const mill = await Mill.findOne({
+            _id: membership.millId,
+            ownerId: req.user.id,
+            isActive: true,
+        });
+
+        //if mill not found?
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or you do not own this mill.",
+            });
+        }
+
+        //if mill found inside the pending membership request.
+        //changing the membership status to rejected
+        membership.status = "rejected";
+        membership.approvedAt = null;
+
+        //saving the updates
+        await membership.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Staff membership request rejected.",
+            membership,
+        });
+    } catch (error) {
+        console.error("Reject membership error:", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "Could not reject membership request.",
+        });
+    }
+}
+);
 
 export default router;
