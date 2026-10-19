@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import connectDB from "./db.js";
 import millRoutes from "./routes/millRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+import membershipRoutes from "./routes/membershipRoutes.js";
 import { protect } from "./middleware/authMiddleware.js";
 
 dotenv.config();
@@ -12,6 +13,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/mills", millRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/memberships", membershipRoutes);
 
 app.get("/api/health", (req,res)=>{
     res.json({
