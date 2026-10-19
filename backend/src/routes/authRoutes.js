@@ -2,7 +2,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-import User from "../models/user.js";
+import User from "../models/User.js";
 
 import mongoose from "mongoose";
 import Mill from "../models/Mill.js";

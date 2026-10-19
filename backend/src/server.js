@@ -4,6 +4,7 @@ import connectDB from "./db.js";
 import millRoutes from "./routes/millRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import membershipRoutes from "./routes/membershipRoutes.js";
+import customerRoutes from "./routes/customerRoutes.js";
 import { protect } from "./middleware/authMiddleware.js";
 
 dotenv.config();
@@ -14,6 +15,7 @@ app.use(express.json());
 app.use("/api/mills", millRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/memberships", membershipRoutes);
+app.use("/api/customers", customerRoutes);
 
 app.get("/api/health", (req,res)=>{
     res.json({

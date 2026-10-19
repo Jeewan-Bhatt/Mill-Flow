@@ -4,7 +4,7 @@ const userSchema = new mongoose.Schema(
     {
         name: {
             type: String,
-            requires: true,
+            required: true,
             trim: true,
         },
 
