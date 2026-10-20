@@ -3,12 +3,14 @@ import express from "express";
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import Customer from "../models/Customer.js";
+import Mill from "../models/Mill.js";
+import MillCustomer from "../models/MillCustomer.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { requiredRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
-//create customer profile
+//Create customer profile
 router.post("/profile", protect, requiredRole("customer"), async (req, res) => {
     try {
         const { phone, address = "" } = req.body;
@@ -97,7 +99,7 @@ router.post("/profile", protect, requiredRole("customer"), async (req, res) => {
 }
 );
 
-// GET customer profile
+//GET customer profile
 router.get("/me", protect, requiredRole("customer"), async (req, res) => {
     try {
         const customer = await Customer.findOne({
@@ -125,5 +127,96 @@ router.get("/me", protect, requiredRole("customer"), async (req, res) => {
     }
 }
 );
+
+//Create Mill-Customer relationship
+router.post("/mills/:millId/relationship", protect, requiredRole("customer"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        //Validate the millId
+        if (!mongoose.isValidObjectId(millId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        //find the customer's profile
+        const customer = await Customer.findOne({
+            userId: req.user.id
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Create your customer profile first."
+            });
+        }
+
+        //Insure the mill exists and is active
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Active mill not found."
+            });
+        }
+
+        //Return an existing relationship if one exists
+        let relationship = await MillCustomer.findOne({
+            millId: mill._id,
+            customerId: customer._id
+        });
+
+        if (relationship) {
+            return res.status(200).json({
+                success: true,
+                message: "Customer-mill relationship already exists.",
+                relationship
+            });
+        }
+
+        //create the relationship
+        relationship = await MillCustomer.create({
+            millId: mill._id,
+            customerId: customer._id
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Customer-mill relationship created successfully.",
+            relationship
+        });
+    } catch (error) {
+        //Handle simultaneous duplicate requests
+        if (error.code === 11000) {
+            const relationship = await MillCustomer.findOne({
+                millId: req.params.millId,
+                customerId: (
+                    await Customer.findOne({ userId: req.user.id})
+                )?._id
+            });
+
+            if (relationship){
+                return res.status(200).json({
+                    success: true,
+                    message: "Customer-mill relationship already exists.",
+                    relationship
+                });
+            }
+        }
+
+        console.error("Create customer-mill relationship error: ", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "server error."
+        });
+    }
+})
 
 export default router;
