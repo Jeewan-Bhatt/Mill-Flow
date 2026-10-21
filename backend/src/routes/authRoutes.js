@@ -1,10 +1,10 @@
-
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
+import Customer from "../models/Customer.js";
 import User from "../models/User.js";
 import Mill from "../models/Mill.js";
 
@@ -43,100 +43,140 @@ const duplicateMessage = (field) => {
     return "An account with these details already exists.";
 };
 
-// PUBLIC CUSTOMER REGISTRATION
+// PUBLIC CUSTOMER REGISTRATION + CUSTOMER PROFILE CREATION
 router.post("/register", async (req, res) => {
-    try {
-        const {
-            name,
-            email,
-            phone,
-            password,
-        } = req.body ?? {};
+    const { name, email, phone, password } = req.body;
 
-        if (
-            typeof name !== "string" ||
-            name.trim().length < 2 ||
-            name.trim().length > 100 ||
-            typeof email !== "string" ||
-            !emailRegex.test(email.trim()) ||
-            typeof phone !== "string" ||
-            !phoneRegex.test(phone.trim()) ||
-            typeof password !== "string" ||
-            password.length < 8
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Provide a valid name, email, 10-digit Nepali phone number, and password of at least 8 characters.",
-            });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-        const normalizedPhone = phone.trim();
-
-        const existingUser = await User.findOne({
-            $or: [
-                { email: normalizedEmail },
-                { phone: normalizedPhone },
-            ],
-        }).select("_id email phone");
-
-        if (existingUser) {
-            const field =
-                existingUser.email === normalizedEmail
-                    ? "email"
-                    : "phone";
-
-            return res.status(409).json({
-                success: false,
-                message: duplicateMessage(field),
-            });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 12);
-
-        const user = await User.create({
-            name: name.trim(),
-            email: normalizedEmail,
-            phone: normalizedPhone,
-            password: hashedPassword,
-            role: "customer",
+    if (
+        !name?.trim() ||
+        !email?.trim() ||
+        !phone?.trim() ||
+        !password
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Name, email, phone, and password are required.",
         });
+    }
 
-        return res.status(201).json({
-            success: true,
-            message: "Account created successfully.",
-            data: {
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phone.trim();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^9[678][0-9]{8}$/;
+
+    if (normalizedName.length < 2 || normalizedName.length > 100) {
+        return res.status(400).json({
+            success: false,
+            message: "Name must be between 2 and 100 characters.",
+        });
+    }
+
+    if (!emailRegex.test(normalizedEmail)) {
+        return res.status(400).json({
+            success: false,
+            message: "Please provide a valid email address.",
+        });
+    }
+
+    if (!phoneRegex.test(normalizedPhone)) {
+        return res.status(400).json({
+            success: false,
+            message: "Please provide a valid 10-digit Nepali mobile number.",
+        });
+    }
+
+    if (typeof password !== "string" || password.length < 8) {
+        return res.status(400).json({
+            success: false,
+            message: "Password must be at least 8 characters long.",
+        });
+    }
+
+    const session = await mongoose.startSession();
+
+    try {
+        let createdUser;
+
+        await session.withTransaction(async () => {
+            const existingUser = await User.findOne({
+                $or: [
+                    { email: normalizedEmail },
+                    { phone: normalizedPhone },
+                ],
+            }).session(session);
+
+            if (existingUser) {
+                const duplicateField =
+                    existingUser.email === normalizedEmail
+                        ? "email"
+                        : "phone";
+
+                const error = new Error(
+                    `An account with this ${duplicateField} already exists.`
+                );
+                error.statusCode = 409;
+                throw error;
+            }
+
+            const hashedPassword = await bcrypt.hash(password, 12);
+
+            const [user] = await User.create(
+                [
+                    {
+                        name: normalizedName,
+                        email: normalizedEmail,
+                        phone: normalizedPhone,
+                        password: hashedPassword,
+                        role: "customer",
+                    },
+                ],
+                { session }
+            );
+
+            await Customer.create(
+                [
+                    {
+                        userId: user._id,
+                    },
+                ],
+                { session }
+            );
+
+            createdUser = {
                 id: user._id,
                 name: user.name,
                 email: user.email,
                 phone: user.phone,
                 role: user.role,
-            },
+            };
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Customer account and profile created successfully.",
+            user: createdUser,
         });
     } catch (error) {
-        if (error.code === 11000) {
-            const field = getDuplicateField(error);
-
+        if (error.statusCode === 409 || error.code === 11000) {
             return res.status(409).json({
                 success: false,
-                message: duplicateMessage(field),
+                message:
+                    error.statusCode === 409
+                        ? error.message
+                        : "An account with this email or phone already exists.",
             });
         }
 
-        if (error.name === "ValidationError") {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid registration details.",
-            });
-        }
-
-        console.error("Registration error:", error);
+        console.error("Customer registration error:", error);
 
         return res.status(500).json({
             success: false,
-            message: "Internal server error.",
+            message: "Unable to register right now. Please try again.",
         });
+    } finally {
+        await session.endSession();
     }
 });
 
