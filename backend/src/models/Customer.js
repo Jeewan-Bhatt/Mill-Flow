@@ -8,33 +8,17 @@ const customerSchema = new mongoose.Schema(
             ref: "User",
             required: true,
             unique: true,
-            index: true
-        },
-
-        name: {
-            type: String,
-            required: true,
-            trim: true,
-            minlength: 2,
-            maxlength: 100
-        },
-
-        phone: {
-            type: String,
-            required: true,
-            trim: true,
-            match: /^[0-9+\-\s()]{7,20}$/
         },
 
         address: {
             type: String,
             trim: true,
             maxlength: 300,
-            default: ""
-        }
+            default: "",
+        },
     },
     {
-        timestamps: true
+        timestamps: true,
     }
 );
 

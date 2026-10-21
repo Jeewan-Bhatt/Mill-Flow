@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 const millSchema = new mongoose.Schema(
@@ -24,11 +25,22 @@ const millSchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true,
+            match: /^\+?[0-9\s()-]{7,20}$/,
         },
 
         services: {
             type: [String],
             required: true,
+            validate: {
+                validator: (services) =>
+                    services.length > 0 &&
+                    services.every(
+                        (service) =>
+                            typeof service === "string" &&
+                            service.trim().length > 0
+                    ),
+                message: "At least one valid service is required.",
+            },
         },
 
         isActive: {
@@ -36,7 +48,7 @@ const millSchema = new mongoose.Schema(
             default: true,
         },
     },
-    {timestamps: true}
+    { timestamps: true }
 );
 
 const Mill = mongoose.model("Mill", millSchema);

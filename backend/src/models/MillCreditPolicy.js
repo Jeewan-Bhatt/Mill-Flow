@@ -6,8 +6,7 @@ const millCreditPolicySchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Mill",
             required: true,
-            unique: true,
-            index: true
+            unique: true
         },
 
         //Minimum verified business activity 
