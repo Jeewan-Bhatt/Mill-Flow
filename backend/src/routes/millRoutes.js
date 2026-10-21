@@ -12,6 +12,7 @@ const allowedServices = [
     "other_grains"
 ];
 
+//register mill
 router.post("/", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { millName, location, contactNo, services } = req.body;
@@ -85,6 +86,7 @@ router.post("/", protect, requiredRole("owner"), async (req, res) => {
     }
 });
 
+//get all registered mills for any owner
 router.get("/", protect, requiredRole("owner"), async (req, res) => {
     try {
         //finding mills that are active at the moment
@@ -108,6 +110,7 @@ router.get("/", protect, requiredRole("owner"), async (req, res) => {
     }
 });
 
+//get the mill with id 
 router.get("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
@@ -144,6 +147,7 @@ router.get("/:id", protect, requiredRole("owner"), async (req, res) => {
     }
 });
 
+//to update a mill through id
 router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
@@ -297,6 +301,7 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
     }
 });
 
+//delete a mill through id
 router.delete("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
