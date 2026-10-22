@@ -15,30 +15,39 @@ const allowedServices = [
 //register mill
 router.post("/", protect, requiredRole("owner"), async (req, res) => {
     try {
+        // Validate the request body before reading fields from it.
+        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+            return res.status(400).json({
+                success: false,
+                message: "Request body must be a JSON object."
+            });
+        }
+
         const { millName, location, contactNo, services } = req.body;
 
-        //validating the services
-        const invalidServices = services.filter(service => !allowedServices.includes(service));
+        // Validate required fields and their types before calling string/array methods.
+        if (
+            typeof millName !== "string" || !millName.trim() ||
+            typeof location !== "string" || !location.trim() ||
+            typeof contactNo !== "string" || !contactNo.trim() ||
+            !Array.isArray(services) || services.length === 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide valid mill name, location, contact number, and at least one service."
+            });
+        }
+
+        // Only allow supported service identifiers.
+        const invalidServices = services.filter(
+            (service) => typeof service !== "string" || !allowedServices.includes(service)
+        );
 
         if (invalidServices.length > 0) {
             return res.status(400).json({
                 success: false,
                 message: "One or more services are invalid.",
                 invalidServices
-            });
-        }
-
-        //check required fields
-        if (
-            !millName?.trim() ||
-            !location?.trim() ||
-            !contactNo?.trim() ||
-            !Array.isArray(services) ||
-            services.length === 0
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Please provide all required mill details."
             });
         }
 

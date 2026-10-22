@@ -7,25 +7,20 @@ dotenv.config();
 export const protect = (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
+        const bearerMatch =
+            typeof authHeader === "string"
+                ? /^Bearer\s+(\S+)$/i.exec(authHeader.trim())
+                : null;
 
-        //if no authentication done
-        if (!authHeader || !authHeader.startsWith("Bearer")) {
+        // Require exactly one token using the Bearer authentication scheme.
+        if (!bearerMatch) {
             return res.status(401).json({
                 success: false,
                 message: "Authentication required."
             });
         }
 
-        //storing the auth token
-        const token = authHeader.split(" ")[1]; //"Bearer abc123" -> ["Bearer", "abc123"] and [1] selects the "abc123"
-
-        //if token not found
-        if (!token) {
-            return res.status(401).json({
-                success: false,
-                message: "Authentication required."
-            });
-        }
+        const token = bearerMatch[1];
 
         //is JWT_SECRET is missing
         if (!process.env.JWT_SECRET) {
@@ -40,7 +35,20 @@ export const protect = (req, res, next) => {
         // verifying the JWT token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        // storing the user data who has been authorized through JWT token
+        // Reject validly signed tokens that do not contain the claims MillFlow expects.
+        const allowedRoles = ["owner", "staff", "customer"];
+        if (
+            !decoded ||
+            typeof decoded.sub !== "string" ||
+            !decoded.sub ||
+            !allowedRoles.includes(decoded.role)
+        ) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or expired token."
+            });
+        }
+
         req.user = {
             id: decoded.sub,
             role: decoded.role
