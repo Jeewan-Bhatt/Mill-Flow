@@ -315,21 +315,30 @@ router.post("/register-owner", async (req, res) => {
             !mill.location.trim() ||
             typeof mill.contactNo !== "string" ||
             !millContactRegex.test(mill.contactNo.trim()) ||
-            !Array.isArray(mill.services) ||
-            mill.services.length === 0 ||
-            !mill.services.every(
+            !Array.isArray(mill.servicePricing) ||
+            mill.servicePricing.length === 0 ||
+            !mill.servicePricing.every(
                 (service) =>
-                    typeof service === "string" &&
-                    allowedServices.includes(service)
-            )
+                    service &&
+                    typeof service.serviceType === "string" &&
+                    allowedServices.includes(service.serviceType) &&
+                    typeof service.rate === "number" &&
+                    Number.isFinite(service.rate) &&
+                    service.rate >= 0 &&
+                    ["per_kg", "per_quintal"].includes(service.rateUnit)
+            ) ||
+            new Set(
+                mill.servicePricing.map((service) => service.serviceType)
+            ).size !== mill.servicePricing.length
         ) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Provide valid details for the first mill and its services.",
+                    "Provide valid mill details and pricing for at least one service"
             });
         }
 
+        //if user with the email or phone already exists
         const existingUser = await User.findOne({
             $or: [{ email }, { phone }],
         }).select("_id email phone");
@@ -367,7 +376,11 @@ router.post("/register-owner", async (req, res) => {
                 ownerId: createdOwner._id,
                 location: mill.location.trim(),
                 contactNo: mill.contactNo.trim(),
-                services: [...new Set(mill.services)],
+                servicePricing: mill.servicePricing.map((service) => ({
+                    serviceType: service.serviceType,
+                    rate: service.rate,
+                    rateUnit: service.rateUnit,
+                })),
             });
 
             await createdMill.save({ session });
@@ -389,7 +402,7 @@ router.post("/register-owner", async (req, res) => {
                 millName: createdMill.millName,
                 location: createdMill.location,
                 contactNo: createdMill.contactNo,
-                services: createdMill.services,
+                servicePricing: createdMill.servicePricing,
             },
         });
     } catch (error) {

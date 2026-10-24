@@ -1,3 +1,4 @@
+
 import express from "express";
 import Mill from "../models/Mill.js";
 import mongoose from "mongoose";
@@ -12,125 +13,142 @@ const allowedServices = [
     "other_grains"
 ];
 
-//register mill
+const allowedRateUnits = ["per_kg", "per_quintal"];
+
+// Validate the complete service pricing array.
+function isValidServicePricing(servicePricing) {
+    if (!Array.isArray(servicePricing) || servicePricing.length === 0) {
+        return false;
+    }
+
+    const seenServices = new Set(); //to store unique values only
+
+    return servicePricing.every((service) => {
+        if (
+            !service ||
+            typeof service.serviceType !== "string" ||
+            !allowedServices.includes(service.serviceType) ||
+            typeof service.rate !== "number" ||
+            !Number.isFinite(service.rate) ||
+            service.rate < 0 ||
+            !allowedRateUnits.includes(service.rateUnit) ||
+            seenServices.has(service.serviceType)
+        ) {
+            return false;
+        }
+
+        seenServices.add(service.serviceType);
+        return true;
+    });
+}
+
+// Register a mill
 router.post("/", protect, requiredRole("owner"), async (req, res) => {
     try {
-        // Validate the request body before reading fields from it.
-        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+        if (
+            !req.body ||
+            typeof req.body !== "object" ||
+            Array.isArray(req.body)
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Request body must be a JSON object."
             });
         }
 
-        const { millName, location, contactNo, services } = req.body;
+        const {
+            millName,
+            location,
+            contactNo,
+            servicePricing
+        } = req.body;
 
-        // Validate required fields and their types before calling string/array methods.
         if (
-            typeof millName !== "string" || !millName.trim() ||
-            typeof location !== "string" || !location.trim() ||
-            typeof contactNo !== "string" || !contactNo.trim() ||
-            !Array.isArray(services) || services.length === 0
+            typeof millName !== "string" ||
+            !millName.trim() ||
+            typeof location !== "string" ||
+            !location.trim() ||
+            typeof contactNo !== "string" ||
+            !contactNo.trim() ||
+            !isValidServicePricing(servicePricing)
         ) {
             return res.status(400).json({
                 success: false,
-                message: "Please provide valid mill name, location, contact number, and at least one service."
+                message:
+                    "Provide valid mill details and at least one valid priced service."
             });
         }
 
-        // Only allow supported service identifiers.
-        const invalidServices = services.filter(
-            (service) => typeof service !== "string" || !allowedServices.includes(service)
-        );
-
-        if (invalidServices.length > 0) {
-            return res.status(400).json({
-                success: false,
-                message: "One or more services are invalid.",
-                invalidServices
-            });
-        }
-
-        //check ownerId format
-        // if (!mongoose.isValidObjectId(ownerId)) {
-        //     return res.status(400).json({
-        //         success: false,
-        //         message: "Invalid ownerId format."
-        //     });
-        // }
-
-        const ownerId = req.user.id;
-        //create document using only allowed fields
         const mill = new Mill({
             millName: millName.trim(),
-            ownerId,
+            ownerId: req.user.id,
             location: location.trim(),
             contactNo: contactNo.trim(),
-            services
+            servicePricing
         });
 
         await mill.save();
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
-            message: "Mill created successfully",
-            data: mill,
+            message: "Mill created successfully.",
+            data: mill
         });
-
     } catch (error) {
-
-        if (error.name === "ValidationError") {
+        if (
+            error.name === "ValidationError" ||
+            error.name === "CastError"
+        ) {
             return res.status(400).json({
                 success: false,
                 message: error.message
-            })
+            });
         }
 
-        console.log("Create mill error:", error);
+        console.error("Create mill error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Internal server error"
+            message: "Internal server error."
         });
     }
 });
 
-//get all registered mills for any owner
+// Get all active mills belonging to the logged-in owner
 router.get("/", protect, requiredRole("owner"), async (req, res) => {
     try {
-        //finding mills that are active at the moment
         const mills = await Mill.find({
             isActive: true,
-            ownerId: req.user.id    //find mills associated with the same owner
+            ownerId: req.user.id
         });
 
         return res.status(200).json({
             success: true,
             count: mills.length,
-            data: mills,
+            data: mills
         });
     } catch (error) {
         console.error("Fetch mills error:", error);
 
         return res.status(500).json({
             success: false,
-            message: "Failed to fetch mills",
+            message: "Failed to fetch mills."
         });
     }
 });
 
-//get the mill with id 
+// Get one active mill by ID
 router.get("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
+
         if (!mongoose.isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
-                message: "invalid mill ID",
+                message: "Invalid mill ID."
             });
         }
 
-        //find a mill if the mill with given id is active at the moment
         const mill = await Mill.findOne({
             _id: id,
             isActive: true,
@@ -140,28 +158,29 @@ router.get("/:id", protect, requiredRole("owner"), async (req, res) => {
         if (!mill) {
             return res.status(404).json({
                 success: false,
-                message: "Mill not found",
+                message: "Mill not found."
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
-            data: mill,
+            data: mill
         });
     } catch (error) {
-        res.status(500).json({
+        console.error("Fetch mill error:", error);
+
+        return res.status(500).json({
             success: false,
-            message: "Failed to fetch mill",
+            message: "Failed to fetch mill."
         });
     }
 });
 
-//to update a mill through id
+// Update a mill
 router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
 
-        //check if the requested id is valid
         if (!mongoose.isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
@@ -169,16 +188,26 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //list of fields allowed to update
+        if (
+            !req.body ||
+            typeof req.body !== "object" ||
+            Array.isArray(req.body)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Request body must be a JSON object."
+            });
+        }
+
+        // Only these fields can be updated through this endpoint.
         const allowedFields = [
             "millName",
             "location",
             "contactNo",
-            "services",
+            "servicePricing",
             "isActive"
         ];
 
-        //to store updated key-value pairs.
         const updates = {};
 
         for (const field of allowedFields) {
@@ -187,7 +216,6 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             }
         }
 
-        //check if any object updated or not
         if (Object.keys(updates).length === 0) {
             return res.status(400).json({
                 success: false,
@@ -195,11 +223,13 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //millname validation
+        // Validate mill name
         if (
             updates.millName !== undefined &&
-            (typeof updates.millName !== "string" ||
-                !updates.millName.trim())
+            (
+                typeof updates.millName !== "string" ||
+                !updates.millName.trim()
+            )
         ) {
             return res.status(400).json({
                 success: false,
@@ -207,11 +237,13 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //location validation
+        // Validate location
         if (
             updates.location !== undefined &&
-            (typeof updates.location !== "string" ||
-                !updates.location.trim())
+            (
+                typeof updates.location !== "string" ||
+                !updates.location.trim()
+            )
         ) {
             return res.status(400).json({
                 success: false,
@@ -219,7 +251,7 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //to trim the extra whitespaces in the updated fields
+        // Normalize string fields
         if (updates.millName !== undefined) {
             updates.millName = updates.millName.trim();
         }
@@ -228,10 +260,13 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             updates.location = updates.location.trim();
         }
 
-        //validating contactNumber
-        if (updates.contactNo !== undefined &&
-            (typeof updates.contactNo !== "string" ||
-                !updates.contactNo.trim())
+        // Validate contact number
+        if (
+            updates.contactNo !== undefined &&
+            (
+                typeof updates.contactNo !== "string" ||
+                !updates.contactNo.trim()
+            )
         ) {
             return res.status(400).json({
                 success: false,
@@ -239,23 +274,22 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //validating services
-        if (updates.services !== undefined) {
-            if (
-                !Array.isArray(updates.services) ||
-                updates.services.length === 0 ||
-                updates.services.some(
-                    service => !allowedServices.includes(service)
-                )
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid services provided."
-                });
-            }
+        if (updates.contactNo !== undefined) {
+            updates.contactNo = updates.contactNo.trim();
         }
 
-        //validating isActive
+        // Validate service pricing when it is being updated
+        if (
+            updates.servicePricing !== undefined &&
+            !isValidServicePricing(updates.servicePricing)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid service pricing provided."
+            });
+        }
+
+        // Validate activation status
         if (
             updates.isActive !== undefined &&
             typeof updates.isActive !== "boolean"
@@ -266,13 +300,15 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             });
         }
 
-        //updating mill with given id
-        const mill = await Mill.findByIdAndUpdate(
+        // Only update a mill owned by the logged-in owner.
+        const mill = await Mill.findOneAndUpdate(
             {
                 _id: id,
-                ownerId: req.user.id,
+                ownerId: req.user.id
             },
-            updates,
+            {
+                $set: updates
+            },
             {
                 new: true,
                 runValidators: true
@@ -291,10 +327,11 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
             message: "Mill updated successfully.",
             data: mill
         });
-
     } catch (error) {
-        if (error.name === "ValidationError" ||
-            error.name === "CastError") {
+        if (
+            error.name === "ValidationError" ||
+            error.name === "CastError"
+        ) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid mill data."
@@ -310,52 +347,54 @@ router.put("/:id", protect, requiredRole("owner"), async (req, res) => {
     }
 });
 
-//delete a mill through id
+// Deactivate a mill instead of permanently deleting it
 router.delete("/:id", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { id } = req.params;
 
-        //request id validation
         if (!mongoose.isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid Mill ID",
+                message: "Invalid mill ID."
             });
         }
 
-        //updating mill isActive
-        const mill = await Mill.findByIdAndUpdate(
+        const mill = await Mill.findOneAndUpdate(
             {
                 _id: id,
                 ownerId: req.user.id
             },
-            { isActive: false },
-            { new: true, runValidators: true }
+            {
+                $set: {
+                    isActive: false
+                }
+            },
+            {
+                new: true,
+                runValidators: true
+            }
         );
 
-        //what if mill not found?
         if (!mill) {
             return res.status(404).json({
                 success: false,
-                message: "Mill not found",
+                message: "Mill not found."
             });
         }
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
-            message: "Mill deactivated successfully",
+            message: "Mill deactivated successfully.",
             data: mill
         });
-
     } catch (error) {
-        console.error("Deactivate mill Error:", error)
+        console.error("Deactivate mill error:", error);
 
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
-            message: "Internal server error",
+            message: "Internal server error."
         });
     }
 });
-
 
 export default router;

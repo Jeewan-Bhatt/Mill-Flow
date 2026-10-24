@@ -2,11 +2,22 @@ import mongoose from "mongoose";
 import Mill from "./models/Mill.js";
 
 const testMill = new Mill({
-    millName: "ABC Mill",
-    ownerId: new mongoose.Types.ObjectId(),
-    location: "dehradun, UK",
-    contactNo: "9800000000",
-    services: ["Rice Milling", "Wheat Grinding"],
+  millName: "ABC Mill",
+  ownerId: new mongoose.Types.ObjectId(),
+  location: "dehradun, UK",
+  contactNo: "9800000000",
+  servicePricing: [
+    {
+      serviceType: "paddy_processing",
+      rate: 5,
+      rateUnit: "per_kg"
+    },
+    {
+      serviceType: "wheat_grinding",
+      rate: 200,
+      rateUnit: "per_quintal"
+    }
+  ],
 });
 
 try {
