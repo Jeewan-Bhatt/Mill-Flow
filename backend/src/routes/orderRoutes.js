@@ -11,7 +11,7 @@ import { requiredRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
-//Customer Booking
+//CUSTOMER BOOKING
 router.post("/", protect, requiredRole("customer"), async (req, res) => {
     try {
         const {
@@ -120,7 +120,98 @@ router.post("/", protect, requiredRole("customer"), async (req, res) => {
     }
 });
 
-//View bookings for a specific mill by owner only
+// CUSTOMER ORDER HISTORY- CUSTOMER ONLY
+router.get("/my-orders", protect, requiredRole("customer"), async (req, res) => {
+    try {
+        // 1. Find the logged-in customer's profile
+        const customer = await Customer.findOne({
+            userId: req.user.id
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer profile not found."
+            });
+        }
+
+        // 2. Find all orders belonging to this customer
+        const orders = await Order.find({
+            customerId: customer._id
+        }).sort({ createdAt: -1 });
+
+        // 3. Return the order history
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+    } catch (error) {
+        console.error("Get customer order history error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve order history."
+        });
+    }
+});
+
+ // CUSTOMER ORDER DETAILS- CUSTOMER ONLY using orderid
+router.get("/:orderId", protect, requiredRole("customer"), async (req, res) => {
+    try {
+        const { orderId } = req.params;
+
+        // 1. Validate order ID
+        if (!mongoose.isValidObjectId(orderId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid order ID."
+            });
+        }
+
+        // 2. Find the logged-in customer's profile
+        const customer = await Customer.findOne({
+            userId: req.user.id
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer profile not found."
+            });
+        }
+
+        // 3. Find an order belonging to this customer
+        const order = await Order.findOne({
+            _id: orderId,
+            customerId: customer._id
+        });
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found."
+            });
+        }
+
+        // 4. Return the order details
+        return res.status(200).json({
+            success: true,
+            order
+        });
+    } catch (error) {
+        console.error("Get customer order details error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve order details."
+        });
+    }
+});
+
+
+
+//VIEW ORDERS OF MILL- BY OWNER ONLY
 router.get("/mill/:millId", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { millId } = req.params;
@@ -166,6 +257,8 @@ router.get("/mill/:millId", protect, requiredRole("owner"), async (req, res) => 
         });
     }
 })
+
+
 
 // RECORD GRAIN ARRIVAL
 router.patch("/:orderId/arrival", protect, requiredRole("owner", "staff"), async (req, res) => {
@@ -270,7 +363,7 @@ router.patch("/:orderId/arrival", protect, requiredRole("owner", "staff"), async
 }
 );
 
- // START ORDER PROCESSING
+// START ORDER PROCESSING
 router.patch("/:orderId/start", protect, requiredRole("owner", "staff"), async (req, res) => {
     try {
         const { orderId } = req.params;
@@ -359,8 +452,7 @@ router.patch("/:orderId/start", protect, requiredRole("owner", "staff"), async (
     }
 });
 
-
- // COMPLETE ORDER
+// COMPLETE ORDER
 router.patch("/:orderId/complete", protect, requiredRole("owner", "staff"), async (req, res) => {
     try {
         const { orderId } = req.params;
