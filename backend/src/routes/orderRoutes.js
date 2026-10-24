@@ -263,7 +263,7 @@ router.patch("/:orderId/cancel", protect, requiredRole("customer"), async (req, 
         ) {
             return res.status(400).json({
                 success: false,
-                message: "Cancellation reason must be defined."
+                message: "Cancellation reason must be text."
             });
         }
 
@@ -294,22 +294,11 @@ router.patch("/:orderId/cancel", protect, requiredRole("customer"), async (req, 
 
 
 
-// GET MILL ORDERS WITH DYNAMIC STATUS FILTER
+// GET ALL MILL ORDERS
 router.get("/mill/:millId/orders", protect, requiredRole("owner", "staff"), async (req, res) => {
     try {
         const { millId } = req.params;
-        const { status } = req.query;
 
-        const allowedStatuses = [
-            "booked",
-            "queued",
-            "processing",
-            "rejected",
-            "cancelled",
-            "completed"
-        ];
-
-        // 1. Validate mill ID
         if (!mongoose.isValidObjectId(millId)) {
             return res.status(400).json({
                 success: false,
@@ -317,15 +306,6 @@ router.get("/mill/:millId/orders", protect, requiredRole("owner", "staff"), asyn
             });
         }
 
-        // 2. Validate status if provided
-        if (status && !allowedStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid status. Use booked, queued, processing, rejected, cancelled, or completed."
-            });
-        }
-
-        // 3. Find the active mill
         const mill = await Mill.findOne({
             _id: millId,
             isActive: true
@@ -338,9 +318,10 @@ router.get("/mill/:millId/orders", protect, requiredRole("owner", "staff"), asyn
             });
         }
 
-        // 4. Verify mill access
         if (req.user.role === "owner") {
-            if (mill.ownerId.toString() !== req.user.id) {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
                 return res.status(403).json({
                     success: false,
                     message: "You do not own this mill."
@@ -362,41 +343,450 @@ router.get("/mill/:millId/orders", protect, requiredRole("owner", "staff"), asyn
             }
         }
 
-        // 5. Build the query dynamically
-        const filter = {
+        const orders = await Order.find({
             millId: mill._id
-        };
-
-        if (status) {
-            filter.status = status;
-        }
-
-        // 6. Sort based on the requested status
-        const sort =
-            status === "queued"
-                ? { arrivedAt: 1, _id: 1 }
-                : { updatedAt: -1 };
-
-        const orders = await Order.find(filter).sort(sort);
+        }).sort({ updatedAt: -1 });
 
         return res.status(200).json({
             success: true,
             count: orders.length,
-            filters: {
-                status: status || "all"
-            },
             orders
         });
     } catch (error) {
-        console.error("Get mill orders error:", error);
+        console.error("Get all mill orders error:", error);
 
         return res.status(500).json({
             success: false,
             message: "Unable to retrieve mill orders."
         });
     }
-}
-);
+});
+
+// GET BOOKED ORDERS
+router.get("/mill/:millId/orders/booked", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (!mongoose.isValidObjectId(millId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "booked"
+        }).sort({ createdAt: 1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get booked orders error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve booked orders."
+        });
+    }
+});
+
+// GET QUEUED ORDERS — OLDEST ARRIVAL FIRST
+router.get("/mill/:millId/orders/queued", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (!mongoose.isValidObjectId(millId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "queued"
+        }).sort({ arrivedAt: 1, _id: 1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get queued orders error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve queued orders."
+        });
+    }
+});
+
+// GET PROCESSING ORDERS
+router.get("/mill/:millId/orders/processing", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (
+            !mongoose.isValidObjectId(millId)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "processing"
+        }).sort({ startedAt: 1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get processing orders error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve processing orders."
+        });
+    }
+});
+
+// GET COMPLETED ORDERS
+router.get("/mill/:millId/orders/completed", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (
+            !mongoose.isValidObjectId(millId)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "completed"
+        }).sort({ completedAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get completed orders error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve completed orders."
+        });
+    }
+});
+
+// GET REJECTED ORDERS
+router.get("/mill/:millId/orders/rejected", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (!mongoose.isValidObjectId(millId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "rejected"
+        }).sort({ rejectedAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get rejected orders error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve rejected orders."
+        });
+    }
+});
+
+// GET CANCELLED ORDERS
+router.get("/mill/:millId/orders/cancelled", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { millId } = req.params;
+
+        if (
+            !mongoose.isValidObjectId(millId)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid mill ID."
+            });
+        }
+
+        const mill = await Mill.findOne({
+            _id: millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        if (req.user.role === "owner") {
+            if (
+                mill.ownerId.toString() !== req.user.id
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        const orders = await Order.find({
+            millId: mill._id,
+            status: "cancelled"
+        }).sort({ cancelledAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders
+        });
+
+    } catch (error) {
+        console.error("Get cancelled orders error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve cancelled orders."
+        });
+    }
+});
+
+
 
 // RECORD GRAIN ARRIVAL
 router.patch("/:orderId/arrival", protect, requiredRole("owner", "staff"), async (req, res) => {
@@ -685,6 +1075,111 @@ router.patch("/:orderId/complete", protect, requiredRole("owner", "staff"), asyn
         });
     }
 });
+
+// REJECT ORDER
+router.patch("/:orderId/reject", protect, requiredRole("owner", "staff"), async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { rejectionReason } = req.body;
+
+        // 1. Validate order ID
+        if (!mongoose.isValidObjectId(orderId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid order ID."
+            });
+        }
+
+        // 2. Validate rejection reason
+        if (
+            typeof rejectionReason !== "string" ||
+            !rejectionReason.trim()
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "A rejection reason is required."
+            });
+        }
+
+        // 3. Find the order
+        const order = await Order.findById(orderId);
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found."
+            });
+        }
+
+        // 4. Find the mill
+        const mill = await Mill.findOne({
+            _id: order.millId,
+            isActive: true
+        });
+
+        if (!mill) {
+            return res.status(404).json({
+                success: false,
+                message: "Mill not found or inactive."
+            });
+        }
+
+        // 5. Verify mill access
+        if (req.user.role === "owner") {
+            if (mill.ownerId.toString() !== req.user.id) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        // 6. Only booked or queued orders can be rejected
+        if (!["booked", "queued"].includes(order.status)) {
+            return res.status(409).json({
+                success: false,
+                message: "Only booked or queued orders can be rejected."
+            });
+        }
+
+        // 7. Record rejection
+        order.status = "rejected";
+        order.rejectedAt = new Date();
+        order.rejectionReason = rejectionReason.trim();
+
+        await order.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Order rejected successfully.",
+            order
+        });
+    } catch (error) {
+        console.error("Reject order error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to reject order."
+        });
+    }
+}
+);
+
+
 
 
 export default router;
