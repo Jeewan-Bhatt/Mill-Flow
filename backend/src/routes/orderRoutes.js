@@ -294,11 +294,20 @@ router.patch("/:orderId/cancel", protect, requiredRole("customer"), async (req, 
 
 
 
-
-//VIEW ORDERS OF MILL- BY OWNER ONLY
-router.get("/mill/:millId", protect, requiredRole("owner"), async (req, res) => {
+// GET MILL ORDERS WITH DYNAMIC STATUS FILTER
+router.get("/mill/:millId/orders", protect, requiredRole("owner", "staff"), async (req, res) => {
     try {
         const { millId } = req.params;
+        const { status } = req.query;
+
+        const allowedStatuses = [
+            "booked",
+            "queued",
+            "processing",
+            "rejected",
+            "cancelled",
+            "completed"
+        ];
 
         // 1. Validate mill ID
         if (!mongoose.isValidObjectId(millId)) {
@@ -308,28 +317,74 @@ router.get("/mill/:millId", protect, requiredRole("owner"), async (req, res) => 
             });
         }
 
-        // 2. Verify that this mill belongs to the logged-in owner
+        // 2. Validate status if provided
+        if (status && !allowedStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid status. Use booked, queued, processing, rejected, cancelled, or completed."
+            });
+        }
+
+        // 3. Find the active mill
         const mill = await Mill.findOne({
             _id: millId,
-            ownerId: req.user.id,
             isActive: true
         });
 
         if (!mill) {
             return res.status(404).json({
                 success: false,
-                message: "Mill not found or you do not have access."
+                message: "Mill not found or inactive."
             });
         }
 
-        // 3. Retrieve this mill's orders
-        const orders = await Order.find({
+        // 4. Verify mill access
+        if (req.user.role === "owner") {
+            if (mill.ownerId.toString() !== req.user.id) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You do not own this mill."
+                });
+            }
+        } else {
+            const membership = await MillMembership.findOne({
+                millId: mill._id,
+                userId: req.user.id,
+                role: "staff",
+                status: "active"
+            });
+
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You are not an active staff member of this mill."
+                });
+            }
+        }
+
+        // 5. Build the query dynamically
+        const filter = {
             millId: mill._id
-        }).sort({ createdAt: -1 });
+        };
+
+        if (status) {
+            filter.status = status;
+        }
+
+        // 6. Sort based on the requested status
+        const sort =
+            status === "queued"
+                ? { arrivedAt: 1, _id: 1 }
+                : { updatedAt: -1 };
+
+        const orders = await Order.find(filter).sort(sort);
 
         return res.status(200).json({
             success: true,
             count: orders.length,
+            filters: {
+                status: status || "all"
+            },
             orders
         });
     } catch (error) {
@@ -340,9 +395,8 @@ router.get("/mill/:millId", protect, requiredRole("owner"), async (req, res) => 
             message: "Unable to retrieve mill orders."
         });
     }
-})
-
-
+}
+);
 
 // RECORD GRAIN ARRIVAL
 router.patch("/:orderId/arrival", protect, requiredRole("owner", "staff"), async (req, res) => {
