@@ -156,7 +156,7 @@ router.get("/my-orders", protect, requiredRole("customer"), async (req, res) => 
     }
 });
 
- // CUSTOMER ORDER DETAILS- CUSTOMER ONLY using orderid
+// CUSTOMER ORDER DETAILS- CUSTOMER ONLY using orderid
 router.get("/:orderId", protect, requiredRole("customer"), async (req, res) => {
     try {
         const { orderId } = req.params;
@@ -208,6 +208,90 @@ router.get("/:orderId", protect, requiredRole("customer"), async (req, res) => {
         });
     }
 });
+
+// CUSTOMER CANCEL ORDER- booked and queued orders only
+router.patch("/:orderId/cancel", protect, requiredRole("customer"), async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { cancellationReason } = req.body;
+
+        // 1. Validate order ID
+        if (!mongoose.isValidObjectId(orderId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid order ID."
+            });
+        }
+
+        // 2. Find the customer's profile
+        const customer = await Customer.findOne({
+            userId: req.user.id
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer profile not found."
+            });
+        }
+
+        // 3. Find an order belonging to this customer
+        const order = await Order.findOne({
+            _id: orderId,
+            customerId: customer._id
+        });
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found."
+            });
+        }
+
+        // 4. Allow cancellation only before processing
+        if (!["booked", "queued"].includes(order.status)) {
+            return res.status(409).json({
+                success: false,
+                message: "Only booked or queued orders can be cancelled."
+            });
+        }
+
+        // 5. Validate the optional cancellation reason
+        if (
+            cancellationReason !== undefined &&
+            typeof cancellationReason !== "string"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Cancellation reason must be defined."
+            });
+        }
+
+        // 6. Cancel the order
+        order.status = "cancelled";
+        order.cancelledAt = new Date();
+        order.cancellationReason =
+            typeof cancellationReason === "string"
+                ? cancellationReason.trim()
+                : "";
+
+        await order.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Order cancelled successfully.",
+            order
+        });
+    } catch (error) {
+        console.error("Cancel order error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to cancel order."
+        });
+    }
+});
+
 
 
 
