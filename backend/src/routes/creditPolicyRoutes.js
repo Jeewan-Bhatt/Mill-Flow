@@ -1,4 +1,3 @@
-
 import express from "express";
 import mongoose from "mongoose";
 import Mill from "../models/Mill.js";
@@ -8,34 +7,193 @@ import { requiredRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
-const allowedFields = [
-    "minTransactionValue",
-    "minGrainWeightKg",
-    "minRelationshipDays",
-    "minOnTimePaymentRate",
+const rootFields = [
+    "eligibilityWindowDays",
+    "scoringWeights",
+    "levels",
+    "maxCreditLimit",
+    "maxCreditDueDays",
     "blockIfOverdue",
     "maxOverdueAmount",
-    "maxCreditLimit",
-    "maxCreditDueDays",
-    "isActive",
+    "isActive"
 ];
 
-// Require explicit configuration when creating the first policy.
-const requiredOnCreate = [...allowedFields];
+const weightFields = [
+    "transactionValue",
+    "grainWeight",
+    "relationshipDuration",
+    "onTimePaymentRate",
+    "fullyRepaidCreditUsage"
+];
 
-const numericFields = [
+const levelFields = [
+    "maxCreditLimit",
+    "pointsThreshold",
     "minTransactionValue",
     "minGrainWeightKg",
     "minRelationshipDays",
     "minOnTimePaymentRate",
-    "maxOverdueAmount",
+    "minFullyRepaidCreditUsage"
+];
+
+const levelNames = ["level1", "level2", "level3"];
+
+const numericFields = [
+    "eligibilityWindowDays",
     "maxCreditLimit",
     "maxCreditDueDays",
+    "maxOverdueAmount"
 ];
 
 const booleanFields = ["blockIfOverdue", "isActive"];
 
-// GET /api/credit-policies/:millId
+function rejectUnknownFields(object, allowedFields, path = "") {
+    if (
+        !object ||
+        typeof object !== "object" ||
+        Array.isArray(object)
+    ) {
+        return `${path || "body"} must be an object.`;
+    }
+
+    const unknown = Object.keys(object).filter(
+        (key) => !allowedFields.includes(key)
+    );
+
+    if (unknown.length > 0) {
+        return `Unknown field(s) in ${path || "body"}: ${unknown.join(", ")}`;
+    }
+
+    return null;
+}
+
+function validateNumberFields(object, fields, path) {
+    for (const field of fields) {
+        if (
+            Object.hasOwn(object, field) &&
+            (typeof object[field] !== "number" ||
+                !Number.isFinite(object[field]))
+        ) {
+            return `${path}.${field} must be a valid number.`;
+        }
+    }
+
+    return null;
+}
+
+function validateBooleanFields(object, fields, path) {
+    for (const field of fields) {
+        if (
+            Object.hasOwn(object, field) &&
+            typeof object[field] !== "boolean"
+        ) {
+            return `${path}.${field} must be a boolean.`;
+        }
+    }
+
+    return null;
+}
+
+function validatePolicyBody(body) {
+    let error = rejectUnknownFields(body, rootFields);
+    if (error) return error;
+
+    error = validateNumberFields(body, numericFields, "body");
+    if (error) return error;
+
+    error = validateBooleanFields(body, booleanFields, "body");
+    if (error) return error;
+
+    if (Object.hasOwn(body, "scoringWeights")) {
+        error = rejectUnknownFields(
+            body.scoringWeights,
+            weightFields,
+            "scoringWeights"
+        );
+        if (error) return error;
+
+        error = validateNumberFields(
+            body.scoringWeights,
+            weightFields,
+            "scoringWeights"
+        );
+        if (error) return error;
+    }
+
+    if (Object.hasOwn(body, "levels")) {
+        error = rejectUnknownFields(
+            body.levels,
+            levelNames,
+            "levels"
+        );
+        if (error) return error;
+
+        for (const levelName of Object.keys(body.levels)) {
+            const level = body.levels[levelName];
+
+            error = rejectUnknownFields(
+                level,
+                levelFields,
+                `levels.${levelName}`
+            );
+            if (error) return error;
+
+            error = validateNumberFields(
+                level,
+                levelFields,
+                `levels.${levelName}`
+            );
+            if (error) return error;
+        }
+    }
+
+    return null;
+}
+
+function mergePolicy(existing, body) {
+    const merged = {
+        eligibilityWindowDays: existing?.eligibilityWindowDays,
+        scoringWeights: existing?.scoringWeights?.toObject
+            ? existing.scoringWeights.toObject()
+            : { ...(existing?.scoringWeights || {}) },
+        levels: {},
+        maxCreditLimit: existing?.maxCreditLimit,
+        maxCreditDueDays: existing?.maxCreditDueDays,
+        blockIfOverdue: existing?.blockIfOverdue,
+        maxOverdueAmount: existing?.maxOverdueAmount,
+        isActive: existing?.isActive
+    };
+
+    for (const levelName of levelNames) {
+        const currentLevel = existing?.levels?.[levelName];
+
+        merged.levels[levelName] = currentLevel?.toObject
+            ? currentLevel.toObject()
+            : { ...(currentLevel || {}) };
+    }
+
+    for (const [key, value] of Object.entries(body)) {
+        if (key === "scoringWeights") {
+            merged.scoringWeights = {
+                ...merged.scoringWeights,
+                ...value
+            };
+        } else if (key === "levels") {
+            for (const [levelName, levelConfig] of Object.entries(value)) {
+                merged.levels[levelName] = {
+                    ...merged.levels[levelName],
+                    ...levelConfig
+                };
+            }
+        } else {
+            merged[key] = value;
+        }
+    }
+
+    return merged;
+}
+
+// Get this mill's credit policy.
 router.get("/:millId", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { millId } = req.params;
@@ -43,50 +201,47 @@ router.get("/:millId", protect, requiredRole("owner"), async (req, res) => {
         if (!mongoose.isValidObjectId(millId)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid mill ID.",
+                message: "Invalid mill ID."
             });
         }
 
         const mill = await Mill.findOne({
             _id: millId,
-            ownerId: req.user.id,
-            isActive: true,
+            ownerId: req.user.id
         });
 
         if (!mill) {
             return res.status(404).json({
                 success: false,
-                message: "Active mill not found.",
+                message: "Mill not found or access denied."
             });
         }
 
-        const policy = await MillCreditPolicy.findOne({
-            millId: mill._id,
-        });
+        const policy = await MillCreditPolicy.findOne({ millId });
 
         if (!policy) {
             return res.status(404).json({
                 success: false,
-                message: "Credit policy has not been configured.",
+                message: "Credit policy not found."
             });
         }
 
         return res.status(200).json({
             success: true,
-            policy,
+            data: policy
         });
     } catch (error) {
-        console.error("Get credit policy error:", error.message);
+        console.error("Get credit policy error:", error);
 
         return res.status(500).json({
             success: false,
-            message: "Server error.",
+            message: "Failed to retrieve credit policy."
         });
     }
-});
+}
+);
 
-// PUT /api/credit-policies/:millId
-// Create a complete policy or update an existing policy.
+// Create or partially update this mill's credit policy.
 router.put("/:millId", protect, requiredRole("owner"), async (req, res) => {
     try {
         const { millId } = req.params;
@@ -94,152 +249,96 @@ router.put("/:millId", protect, requiredRole("owner"), async (req, res) => {
         if (!mongoose.isValidObjectId(millId)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid mill ID.",
+                message: "Invalid mill ID."
             });
         }
 
         const mill = await Mill.findOne({
             _id: millId,
-            ownerId: req.user.id,
-            isActive: true,
+            ownerId: req.user.id
         });
 
         if (!mill) {
             return res.status(404).json({
                 success: false,
-                message: "Active mill not found.",
+                message: "Mill not found or access denied."
             });
         }
 
-        const body = req.body;
-
         if (
-            !body ||
-            typeof body !== "object" ||
-            Array.isArray(body)
+            !req.body ||
+            typeof req.body !== "object" ||
+            Array.isArray(req.body) ||
+            Object.keys(req.body).length === 0
         ) {
             return res.status(400).json({
                 success: false,
-                message: "Request body must be a JSON object.",
+                message: "Provide a non-empty JSON object."
             });
         }
 
-        const updates = {};
+        const bodyError = validatePolicyBody(req.body);
 
-        for (const field of Object.keys(body)) {
-            if (!allowedFields.includes(field)) {
-                return res.status(400).json({
-                    success: false,
-                    message: `Field '${field}' is not allowed.`,
-                });
-            }
-
-            updates[field] = body[field];
-        }
-
-        if (Object.keys(updates).length === 0) {
+        if (bodyError) {
             return res.status(400).json({
                 success: false,
-                message: "Provide at least one policy field.",
+                message: bodyError
             });
         }
 
-        for (const field of numericFields) {
-            if (
-                Object.hasOwn(updates, field) &&
-                (
-                    typeof updates[field] !== "number" ||
-                    !Number.isFinite(updates[field])
-                )
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: `${field} must be a valid number.`,
-                });
-            }
-        }
+        let policy = await MillCreditPolicy.findOne({ millId });
 
-        for (const field of booleanFields) {
-            if (
-                Object.hasOwn(updates, field) &&
-                typeof updates[field] !== "boolean"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: `${field} must be true or false.`,
-                });
-            }
-        }
+        const merged = mergePolicy(policy, req.body);
 
-        let policy = await MillCreditPolicy.findOne({
-            millId: mill._id,
-        });
-
-        // First-time creation must configure every policy field.
         if (!policy) {
-            const missingFields = requiredOnCreate.filter(
-                (field) => !Object.hasOwn(updates, field)
-            );
-
-            if (missingFields.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Complete all fields when creating a credit policy.",
-                    missingFields,
-                });
-            }
-
             policy = new MillCreditPolicy({
-                millId: mill._id,
-                ...updates,
+                millId,
+                ...merged
             });
-
-            await policy.save();
-
-            return res.status(201).json({
-                success: true,
-                message: "Credit policy created successfully.",
-                policy,
-            });
+        } else {
+            policy.set(merged);
         }
 
-        // Update only supplied fields. Schema validation checks the
-        // resulting document, including fields that were not changed.
-        policy.set(updates);
         await policy.save();
 
-        return res.status(200).json({
+        return res.status(policy.isNew ? 201 : 200).json({
             success: true,
-            message: "Credit policy updated successfully.",
-            policy,
+            message: "Credit policy saved successfully.",
+            data: policy
         });
     } catch (error) {
         if (
-            error instanceof mongoose.Error.ValidationError ||
-            error instanceof mongoose.Error.CastError
+            error.name === "ValidationError" ||
+            error.name === "CastError"
         ) {
             return res.status(400).json({
                 success: false,
-                message: "Credit policy contains invalid values.",
+                message: "Credit policy validation failed.",
+                errors: error.errors
+                    ? Object.fromEntries(
+                        Object.entries(error.errors).map(
+                            ([key, value]) => [key, value.message]
+                        )
+                    )
+                    : error.message
             });
         }
 
         if (error.code === 11000) {
             return res.status(409).json({
                 success: false,
-                code: "CREDIT_POLICY_CONFLICT",
-                message:
-                    "A credit policy already exists for this mill. Fetch the latest policy and try again.",
+                message: "A credit policy already exists for this mill."
             });
         }
 
-        console.error("Save credit policy error:", error.message);
+        console.error("Save credit policy error:", error);
 
         return res.status(500).json({
             success: false,
-            message: "Server error.",
+            message: "Failed to save credit policy."
         });
     }
-});
+}
+);
 
 export default router;
