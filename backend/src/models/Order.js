@@ -112,6 +112,18 @@ const orderSchema = new mongoose.Schema(
             default: null
         },
 
+        paymentStatus: {
+            type: String,
+            enum: [
+                "unpaid",
+                "pending",
+                "paid",
+                "credit_used"
+            ],
+            default: "unpaid",
+            required: true
+        },
+
         rejectedAt: {
             type: Date,
             default: null

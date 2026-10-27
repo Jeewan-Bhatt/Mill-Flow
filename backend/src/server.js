@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 
 import connectDB from "./db.js";
 
+import paymentRoutes from "./routes/paymentRoutes.js";
 import millRoutes from "./routes/millRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import membershipRoutes from "./routes/membershipRoutes.js";
@@ -23,6 +24,7 @@ app.use("/api/memberships", membershipRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/credit-policies", creditPolicyRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/payments", paymentRoutes);
 
 app.get("/api/health", (req,res)=>{
     res.json({
