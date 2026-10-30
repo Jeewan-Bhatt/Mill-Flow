@@ -44,6 +44,13 @@ const millCreditAccountSchema = new mongoose.Schema(
             required: true
         },
 
+        creditUsageVersion: {
+            type: Number,
+            min: 0,
+            default: 0,
+            required: true
+        },
+
         creditDueDays: {
             type: Number,
             min: 0,

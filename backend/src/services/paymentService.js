@@ -1,4 +1,3 @@
-
 import mongoose from "mongoose";
 
 import Order from "../models/Order.js";
@@ -166,6 +165,24 @@ export async function useCreditForOrder({
                 throw new Error("No valid approved credit account exists.");
             }
 
+            // Prevent simultaneous transactions from using stale credit balances.
+            const accountLock = await MillCreditAccount.updateOne(
+                {
+                    _id: account._id,
+                    creditUsageVersion: account.creditUsageVersion
+                },
+                {
+                    $inc: { creditUsageVersion: 1 }
+                },
+                { session }
+            );
+
+            if (accountLock.modifiedCount !== 1) {
+                throw new Error(
+                    "Credit account changed. Please retry the transaction."
+                );
+            }
+
             const policy = await MillCreditPolicy.findOne({
                 millId: order.millId
             }).session(session);
@@ -274,6 +291,197 @@ export async function useCreditForOrder({
                 outstandingAfterCharge: outstanding + entry.amount,
                 availableCreditAfterCharge:
                     availableCredit - entry.amount
+            };
+        });
+
+        return result;
+    } finally {
+        await session.endSession();
+    }
+}
+
+export async function recordCashCreditRepayment({
+    millId,
+    customerId,
+    amount,
+    userId,
+    notes = ""
+}) {
+    if (
+        !mongoose.isValidObjectId(millId) ||
+        !mongoose.isValidObjectId(customerId) ||
+        !mongoose.isValidObjectId(userId) ||
+        !Number.isFinite(amount) ||
+        amount <= 0
+    ) {
+        throw new Error("Invalid repayment details.");
+    }
+
+    const repaymentAmount = Math.round(amount * 100) / 100;
+    const session = await mongoose.startSession();
+
+    try {
+        let result;
+
+        await session.withTransaction(async () => {
+            // Only the active mill owner can record cash repayment.
+            const mill = await Mill.findOne({
+                _id: millId,
+                ownerId: userId,
+                isActive: true
+            }).session(session);
+
+            if (!mill) {
+                throw new Error(
+                    "Only the active mill owner can record cash repayments."
+                );
+            }
+
+            const account = await MillCreditAccount.findOne({
+                millId,
+                customerId
+            }).session(session);
+
+            if (!account) {
+                throw new Error("Credit account not found.");
+            }
+
+            // Serialize credit operations for this account.
+            const lockFilter = {
+                _id: account._id,
+                creditUsageVersion: account.creditUsageVersion
+            };
+
+            if (account.creditUsageVersion === 0) {
+                lockFilter.$or = [
+                    { creditUsageVersion: 0 },
+                    { creditUsageVersion: { $exists: false } }
+                ];
+            }
+
+            const lock = await MillCreditAccount.updateOne(
+                lockFilter,
+                { $inc: { creditUsageVersion: 1 } },
+                { session }
+            );
+
+            if (lock.modifiedCount !== 1) {
+                throw new Error(
+                    "Credit account changed. Please retry."
+                );
+            }
+
+            // Get the customer's outstanding credit entries.
+            const entries = await CreditLedgerEntry.find({
+                millId,
+                customerId
+            })
+                .sort({ dueAt: 1, createdAt: 1 })
+                .session(session)
+                .lean();
+
+            const entryIds = entries.map(entry => entry._id);
+
+            const allocations = await CreditRepaymentAllocation.find({
+                millId,
+                customerId,
+                creditLedgerEntryId: { $in: entryIds }
+            })
+                .session(session)
+                .lean();
+
+            const repaidByEntry = new Map();
+
+            for (const allocation of allocations) {
+                const key = String(allocation.creditLedgerEntryId);
+
+                repaidByEntry.set(
+                    key,
+                    (repaidByEntry.get(key) || 0) + allocation.amount
+                );
+            }
+
+            const outstandingEntries = entries.map(entry => {
+                const repaid =
+                    repaidByEntry.get(String(entry._id)) || 0;
+
+                return {
+                    entry,
+                    remaining: Math.max(
+                        0,
+                        Math.round((entry.amount - repaid) * 100) / 100
+                    )
+                };
+            }).filter(item => item.remaining > 0);
+
+            const totalOutstanding = outstandingEntries.reduce(
+                (total, item) => total + item.remaining,
+                0
+            );
+
+            if (repaymentAmount > totalOutstanding + 0.001) {
+                throw new Error(
+                    "Repayment exceeds the customer's outstanding debt."
+                );
+            }
+
+            // Record the verified cash repayment.
+            const [payment] = await Payment.create(
+                [{
+                    type: "credit_repayment",
+                    millId,
+                    customerId,
+                    recordedBy: userId,
+                    verifiedBy: userId,
+                    amount: repaymentAmount,
+                    method: "cash",
+                    status: "verified",
+                    paidAt: new Date(),
+                    verifiedAt: new Date(),
+                    notes
+                }],
+                { session }
+            );
+
+            // Allocate repayment to oldest debt first.
+            let remainingPayment = repaymentAmount;
+            const allocationDocs = [];
+
+            for (const item of outstandingEntries) {
+                if (remainingPayment <= 0.001) break;
+
+                const allocatedAmount = Math.min(
+                    remainingPayment,
+                    item.remaining
+                );
+
+                allocationDocs.push({
+                    millId,
+                    customerId,
+                    paymentId: payment._id,
+                    creditLedgerEntryId: item.entry._id,
+                    amount: allocatedAmount,
+                    allocatedBy: userId
+                });
+
+                remainingPayment = Math.round(
+                    (remainingPayment - allocatedAmount) * 100
+                ) / 100;
+            }
+
+            if (allocationDocs.length > 0) {
+                await CreditRepaymentAllocation.insertMany(
+                    allocationDocs,
+                    { session }
+                );
+            }
+
+            result = {
+                payment,
+                allocations: allocationDocs,
+                outstandingAfterRepayment: Math.round(
+                    (totalOutstanding - repaymentAmount) * 100
+                ) / 100
             };
         });
 

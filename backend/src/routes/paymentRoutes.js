@@ -1,9 +1,15 @@
-
 import express from "express";
+import mongoose from "mongoose";
+import Customer from "../models/Customer.js";
+
+import {
+    recordCashOrderPayment,
+    useCreditForOrder,
+    recordCashCreditRepayment
+} from "../services/paymentService.js";
 
 import { protect } from "../middleware/authMiddleware.js";
 import { requiredRole } from "../middleware/roleMiddleware.js";
-import { recordCashOrderPayment } from "../services/paymentService.js";
 
 const router = express.Router();
 
@@ -41,5 +47,84 @@ router.post("/orders/:orderId/cash", protect, requiredRole("owner"), async (req,
     }
 }
 );
+
+// Record cash credit repayment — mill owner only.
+router.post("/credit-repayments/cash", protect, requiredRole("owner"), async (req, res) => {
+    try {
+        const { millId, customerId, amount, notes } = req.body;
+
+        const result = await recordCashCreditRepayment({
+            millId,
+            customerId,
+            amount,
+            userId: req.user.id,
+            notes: typeof notes === "string" ? notes.trim() : ""
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Cash credit repayment recorded successfully.",
+            data: result
+        });
+    } catch (error) {
+        const message = error.message || "Unable to record repayment.";
+
+        const statusCode =
+            message.includes("not found") ? 404 :
+                message.includes("Only the") ? 403 :
+                    message.includes("exceeds") ? 400 :
+                        message.includes("changed") ? 409 :
+                            message.includes("Invalid") ? 400 : 400;
+
+        return res.status(statusCode).json({
+            success: false,
+            message
+        });
+    }
+}
+);
+
+// Customer uses approved credit for a completed order.
+router.post("/orders/:orderId/credit", protect, requiredRole("customer"), async (req, res) => {
+    try {
+        if (!mongoose.isValidObjectId(req.params.orderId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid order ID."
+            });
+        }
+
+        const customer = await Customer.findOne({
+            userId: req.user.id
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Customer profile not found."
+            });
+        }
+
+        const result = await useCreditForOrder({
+            orderId: req.params.orderId,
+            customerId: customer._id,
+            userId: req.user.id
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Order charged to credit successfully.",
+            data: result
+        });
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to use credit."
+        });
+    }
+}
+);
+
+
 
 export default router;
